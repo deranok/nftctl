@@ -1,0 +1,185 @@
+#!/bin/sh
+#
+# SPDX-License-Identifier: GPL-2.0
+# SPDX-URL: https://spdx.org/licenses/GPL-2.0.html
+
+#~ set -e
+which nft > /dev/null
+
+usage() {
+	name=$(basename "$0")
+	echo "Usage: $name start|stop|restart|list|enrule|disrule"
+	echo
+	echo "       $name start     load the rules"
+	echo "       $name stop      flush the rules"
+	echo "       $name restart   reload the rules"
+	echo "       $name list      list the loaded rules"
+	echo "       $name save      write loaded rules to stdout in saveable format"
+	echo "       $name enrule $rulename   enable a rule, run $name restart for the rule to take effect"
+	echo "       $name disrule $rulename  disable a rule, run $name restart for the rule to be removed"
+	echo
+	echo "Using --confirm in the following manner will prompt you to check if"
+	echo "your network connection is working fine:"
+	echo
+	echo "       $name start --confirm"
+	echo "       $name restart --confirm"
+}
+
+if [ "$(id -u)" -ne 0 ]
+then
+	echo "Warning: Only root can run this script" >&2
+	echo
+	usage
+	exit 1
+fi
+
+rulespath=/etc/nftables/rules.d
+
+if [ ! -d "$rulespath" ]
+then
+	mkdir -p "$rulespath"
+fi
+
+ctrl_c() {
+	echo
+	echo "nftables rules successfully applied"
+	exit 0
+}
+
+nft_list_protocol() {
+	for T in $(nft list tables "$1" | cut -d ' ' -f 3)
+	do
+		nft list table "$1" "$T"
+	done
+}
+
+nftables_start() {
+  if [ ! -d "$rulespath/enabled" ]
+  then
+    mkdir "$rulespath/enabled"
+  fi
+  
+	find -L /etc/nftables/rules.d/enabled -maxdepth 1 -type f -name '*.rules' -print0 | \
+		sort -z | xargs --null --no-run-if-empty --max-args=1 nft -f
+
+	if [ -t 0 ] && [ "$1" = "--confirm" ]
+	then
+		echo "Please confirm that your network connection is working and press Ctrl+C on success"
+		trap ctrl_c INT
+
+		sleep 20
+
+		echo "No response, flushing rules"
+		nftables_stop
+	fi
+}
+
+nftables_list() {
+	for P in ip inet ip6 arp bridge
+	do
+		nft_list_protocol "$P"
+	done
+}
+
+nftables_stop() {
+	nft flush ruleset
+}
+
+nftables_restart() {
+	nftables_stop
+	nftables_start "$1"
+}
+
+nftables_enrule() {
+  if [ -z "$1" ]
+  then
+    echo "You must specify the rule file to enable $# $1"
+    echo
+    usage
+    exit 1
+  fi
+  
+  if [ ! -e "$rulespath/$1.rules" ]
+  then
+    echo "No such file '$1.rules' found in $rulespath"
+    exit 1
+  fi
+  
+  if [ -e "$rulespath/enabled/$1.rules" ]
+  then
+    echo "Rule is enabled"
+    exit 0
+  fi
+  
+  if [ ! -d "$rulespath/enabled" ]
+  then
+    mkdir "$rulespath/enabled"
+  fi
+  
+  ln -s "$rulespath/$1.rules" "$rulespath/enabled/"
+  echo "Rule is enabled. Run $0 restart to take effect."
+}
+
+nftables_disrule() {
+  if [ -z "$1" ]
+  then
+    echo "You must specify the rule file to disable"
+    echo
+    usage
+    exit 1
+  fi
+  
+  if [ ! -e "$rulespath/$1.rules" ]
+  then
+    echo "No such file '$1.rules' found in $rulespath"
+    exit 1;
+  fi
+  
+  if [ ! -e "$rulespath/enabled/$1.rules" ]
+  then
+    echo "Rule is disnabled"
+    exit 0
+  fi
+  
+  $(which rm) "$rulespath/enabled/$1.rules"
+  echo "Rule is disabled. Run $0 restart to take effect."
+}
+
+case "$1" in
+	start)
+		nftables_start "$2"
+		;;
+
+	stop)
+		nftables_stop
+		;;
+
+	restart)
+		nftables_restart "$2"
+		;;
+
+	list)
+		nftables_list
+		;;
+
+	save)
+		echo "#!/usr/sbin/nft -f"
+		echo
+		echo "flush ruleset"
+		echo
+		nft list ruleset
+		;;
+    
+  enrule)
+    nftables_enrule "$2"
+    ;;
+  
+  disrule)
+    nftables_disrule "$2"
+    ;;
+  
+	*)
+		usage
+		exit 1
+		;;
+esac

@@ -1,0 +1,11 @@
+# redirect all dns queries to a resolver running on localhost, which in turn
+# forwards queries over the port 4444
+table ip dns {
+  chain dns_resolver {
+      type nat hook output priority -100;
+      udp sport 4444 udp dport 53 accept 
+      tcp sport 4444 tcp dport 53 accept
+      tcp dport 53 redirect to 53
+      udp dport 53 redirect to 53
+  }
+}
