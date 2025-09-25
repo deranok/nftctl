@@ -33,7 +33,7 @@ To list enable a rule:
 nftctl enrule $rulename
 nftctl restart
 ```
-To list all rules:
+To disable a rule:
 ```bash
 nftctl disrule $rulename
 nftctl restart
